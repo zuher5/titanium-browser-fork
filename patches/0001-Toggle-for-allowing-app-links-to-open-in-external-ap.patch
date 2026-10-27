@@ -1,0 +1,190 @@
+From 1e7d69d79b3d829fd40f7f30d1a7ae38484f71b2 Mon Sep 17 00:00:00 2001
+From: Zuher <zuher5@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 00:59:17 +0700
+Subject: [PATCH] Toggle for allowing app links to open in external apps
+
+Add a 'Allow app links to open in apps' switch under Privacy and security.
+When disabled, navigations handing off a web page to an installed app
+(app links, link capturing, intent:// and other custom schemes) are kept
+in the browser. Plain protocol handlers (tel:, mailto:, sms:, geo:) keep
+working. The 'Open in App' entry points are hidden while disabled.
+---
+ .../ExternalNavigationDelegateImpl.java       | 26 ++++++++++++++++++-
+ .../browser/open_in_app/OpenInAppUtils.java   |  2 ++
+ .../shared_preferences/SharedPrefsUtils.java  |  5 +++-
+ .../java/res/xml/privacy_preferences_ext.xml  |  5 ++++
+ .../privacy/settings/PrivacySettingsExt.java  | 16 ++++++++++++
+ .../strings/android_chrome_ext_strings.grdp   |  6 +++++
+ 6 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/externalnav/ExternalNavigationDelegateImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/externalnav/ExternalNavigationDelegateImpl.java
+index f29b082..a64d3da 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/externalnav/ExternalNavigationDelegateImpl.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/externalnav/ExternalNavigationDelegateImpl.java
+@@ -33,6 +33,7 @@ import org.chromium.chrome.browser.document.ChromeLauncherActivity;
+ import org.chromium.chrome.browser.glic.GlicEnabling;
+ import org.chromium.chrome.browser.open_in_app.OpenInAppDelegate;
+ import org.chromium.chrome.browser.open_in_app.OpenInAppUtils;
++import org.chromium.base.shared_preferences.SharedPrefsUtils;
+ import org.chromium.chrome.browser.password_manager.CctPasswordSavingMetricsRecorderBridge;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.tab.Tab;
+@@ -143,7 +144,30 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
+     @Override
+     public boolean shouldDisableExternalIntentRequestsForUrl(
+             ExternalNavigationParams params, Intent intent) {
+-        return false;
++        if (SharedPrefsUtils.SharedPrefsExt.ALLOW_APP_LINKS.get()) return false;
++        return isAppLinkNavigation(params.getUrl(), intent);
++    }
++
++    /**
++     * Returns whether the navigation hands off a web page to an installed app (app links, link
++     * capturing, intent:// or other custom schemes). Plain protocol handlers like tel:, mailto:,
++     * sms: and geo: are exempt so that they keep working when opening app links in external apps
++     * is disabled by the user.
++     */
++    private static boolean isAppLinkNavigation(GURL url, Intent intent) {
++        String scheme = url.isValid() ? url.getScheme() : "";
++        if (scheme.isEmpty() && intent.getData() != null) {
++            scheme = intent.getData().getScheme();
++        }
++        switch (scheme) {
++            case UrlConstants.TEL_SCHEME:
++            case UrlConstants.SMS_SCHEME:
++            case "mailto":
++            case "geo":
++                return false;
++            default:
++                return true;
++        }
+     }
+ 
+     @Override
+diff --git a/chrome/browser/open_in_app/android/java/src/org/chromium/chrome/browser/open_in_app/OpenInAppUtils.java b/chrome/browser/open_in_app/android/java/src/org/chromium/chrome/browser/open_in_app/OpenInAppUtils.java
+index 7bffc96..0475602 100644
+--- a/chrome/browser/open_in_app/android/java/src/org/chromium/chrome/browser/open_in_app/OpenInAppUtils.java
++++ b/chrome/browser/open_in_app/android/java/src/org/chromium/chrome/browser/open_in_app/OpenInAppUtils.java
+@@ -5,6 +5,7 @@
+ package org.chromium.chrome.browser.open_in_app;
+ 
+ import org.chromium.base.DeviceInfo;
++import org.chromium.base.shared_preferences.SharedPrefsUtils;
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+ 
+@@ -14,6 +15,7 @@ public class OpenInAppUtils {
+ 
+     /** Returns whether Open in App is available. */
+     public static boolean isOpenInAppAvailable() {
++        if (!SharedPrefsUtils.SharedPrefsExt.ALLOW_APP_LINKS.get()) return false;
+         return ChromeFeatureList.sDesktopAndroidLinkCapturing.isEnabled() && DeviceInfo.isDesktop();
+     }
+ 
+diff --git a/titanium/chromium_src/base/android/java/src/org/chromium/base/shared_preferences/SharedPrefsUtils.java b/titanium/chromium_src/base/android/java/src/org/chromium/base/shared_preferences/SharedPrefsUtils.java
+index e9f9abe..9f80e45 100644
+--- a/titanium/chromium_src/base/android/java/src/org/chromium/base/shared_preferences/SharedPrefsUtils.java
++++ b/titanium/chromium_src/base/android/java/src/org/chromium/base/shared_preferences/SharedPrefsUtils.java
+@@ -123,6 +123,8 @@ public final class SharedPrefsUtils {
+                 new BoolSharedPref("close_tabs_on_exit", false);
+         public static final BoolSharedPref OPEN_LINKS_IN_INCOGNITO =
+                 new BoolSharedPref("open_links_in_incognito", false);
++        public static final BoolSharedPref ALLOW_APP_LINKS =
++                new BoolSharedPref("allow_app_links", true);
+     }
+ 
+     static SharedPreferencesManager getSharedPrefManager() {
+@@ -134,7 +136,8 @@ public final class SharedPrefsUtils {
+         // clang-format off
+         return Arrays.asList(
+             SharedPrefsExt.CLOSE_TABS_ON_EXIT.getKey(),
+-            SharedPrefsExt.OPEN_LINKS_IN_INCOGNITO.getKey()
++            SharedPrefsExt.OPEN_LINKS_IN_INCOGNITO.getKey(),
++            SharedPrefsExt.ALLOW_APP_LINKS.getKey()
+         ).contains(key);
+         // clang-format on
+     }
+diff --git a/titanium/chromium_src/chrome/android/java/res/xml/privacy_preferences_ext.xml b/titanium/chromium_src/chrome/android/java/res/xml/privacy_preferences_ext.xml
+index f1d44d6..2f9dcee 100644
+--- a/titanium/chromium_src/chrome/android/java/res/xml/privacy_preferences_ext.xml
++++ b/titanium/chromium_src/chrome/android/java/res/xml/privacy_preferences_ext.xml
+@@ -20,6 +20,11 @@ that can be found in the LICENSE file.
+         android:title="@string/open_links_in_incognito_title"
+         android:summary="@string/open_links_in_incognito_summary"
+         android:persistent="false"/>
++    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
++        android:key="allow_app_links"
++        android:title="@string/allow_app_links_title"
++        android:summary="@string/allow_app_links_summary"
++        android:persistent="false"/>
+     <org.chromium.components.browser_ui.settings.ChromeBasePreference
+         android:key="webrtc_policy"
+         android:title="@string/webrtc_policy_title"
+diff --git a/titanium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/privacy/settings/PrivacySettingsExt.java b/titanium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/privacy/settings/PrivacySettingsExt.java
+index 4c33386..4dd3217 100644
+--- a/titanium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/privacy/settings/PrivacySettingsExt.java
++++ b/titanium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/privacy/settings/PrivacySettingsExt.java
+@@ -33,6 +33,7 @@ final class PrivacySettingsExt {
+     private static final String PREF_CLOSE_TABS_ON_EXIT = SharedPrefsExt.CLOSE_TABS_ON_EXIT.getKey();
+     private static final String PREF_OPEN_LINKS_IN_INCOGNITO =
+             SharedPrefsExt.OPEN_LINKS_IN_INCOGNITO.getKey();
++    private static final String PREF_ALLOW_APP_LINKS = SharedPrefsExt.ALLOW_APP_LINKS.getKey();
+     private static final String PREF_WEBRTC_POLICY = "webrtc_policy";
+     private static final String PREF_CROSS_ORIGIN_REFERRER_POLICY = "cross_origin_referrer_policy";
+ 
+@@ -46,6 +47,8 @@ final class PrivacySettingsExt {
+                 SharedPrefsExt.CLOSE_TABS_ON_EXIT.put((boolean) val);
+             } else if (PREF_OPEN_LINKS_IN_INCOGNITO.equals(key)) {
+                 SharedPrefsExt.OPEN_LINKS_IN_INCOGNITO.put((boolean) val);
++            } else if (PREF_ALLOW_APP_LINKS.equals(key)) {
++                SharedPrefsExt.ALLOW_APP_LINKS.put((boolean) val);
+             }
+             return true;
+         };
+@@ -105,6 +108,13 @@ final class PrivacySettingsExt {
+             openLinksInIncognitoPref.setOnPreferenceChangeListener(getListener(profile));
+         }
+ 
++        ChromeSwitchPreference allowAppLinksPref =
++                (ChromeSwitchPreference) prefFragment.findPreference(PREF_ALLOW_APP_LINKS);
++        if (allowAppLinksPref != null) {
++            allowAppLinksPref.setOrder(PRIVACY_PREFERENCES_ORDER);
++            allowAppLinksPref.setOnPreferenceChangeListener(getListener(profile));
++        }
++
+         Preference webRtcPolicyPref = prefFragment.findPreference(PREF_WEBRTC_POLICY);
+         if (webRtcPolicyPref != null) {
+             webRtcPolicyPref.setOrder(PRIVACY_PREFERENCES_ORDER);
+@@ -139,6 +149,12 @@ final class PrivacySettingsExt {
+                 /* newSummary*/ null,
+                 /* newCheckedValue*/ SharedPrefsExt.OPEN_LINKS_IN_INCOGNITO.get());
+ 
++        ChromeSwitchPreference allowAppLinksPref =
++                (ChromeSwitchPreference) prefFragment.findPreference(PREF_ALLOW_APP_LINKS);
++        SettingsExtUtils.safelyUpdateSwitchPreference(/* switchPref */ allowAppLinksPref,
++                /* newSummary*/ null,
++                /* newCheckedValue*/ SharedPrefsExt.ALLOW_APP_LINKS.get());
++
+         Preference webRtcPolicyPref = prefFragment.findPreference(PREF_WEBRTC_POLICY);
+         SettingsExtUtils.safelyUpdatePreference(/* preference */ webRtcPolicyPref,
+                 /* newSummary */ WebRtcPolicySettings.getSummary(profile, ctx));
+diff --git a/titanium/chromium_src/chrome/browser/ui/android/strings/android_chrome_ext_strings.grdp b/titanium/chromium_src/chrome/browser/ui/android/strings/android_chrome_ext_strings.grdp
+index d09c633..e35ffe8 100644
+--- a/titanium/chromium_src/chrome/browser/ui/android/strings/android_chrome_ext_strings.grdp
++++ b/titanium/chromium_src/chrome/browser/ui/android/strings/android_chrome_ext_strings.grdp
+@@ -28,6 +28,12 @@
+   <message name="IDS_OPEN_LINKS_IN_INCOGNITO_SUMMARY" desc="Summary of opening external links in incognito tabs menu item">
+     Open links navigated by external apps in incognito tabs
+   </message>
++  <message name="IDS_ALLOW_APP_LINKS_TITLE" desc="Title of the allow app links menu item">
++    Allow app links to open in apps
++  </message>
++  <message name="IDS_ALLOW_APP_LINKS_SUMMARY" desc="Summary of the allow app links menu item">
++    Allow links to open in installed apps outside Titanium
++  </message>
+   <message name="IDS_TITANIUM_CONFIG_VERSION_TITLE" desc="Title of TitaniumConfig version menu item">
+     Titanium Config version
+   </message>
+-- 
+2.54.0.windows.1
+

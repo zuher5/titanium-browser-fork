@@ -28,6 +28,7 @@ replace "$SCRIPT_DIR/vanadium/patches" "VANADIUM" "TITANIUM"
 replace "$SCRIPT_DIR/vanadium/patches" "Vanadium" "Titanium"
 replace "$SCRIPT_DIR/vanadium/patches" "vanadium" "titanium"
 git am --whitespace=nowarn --keep-non-patch $SCRIPT_DIR/vanadium/patches/*.patch
+git am --whitespace=nowarn --keep-non-patch $SCRIPT_DIR/patches/*.patch
 
 gclient sync -D --no-history --nohooks
 gclient runhooks

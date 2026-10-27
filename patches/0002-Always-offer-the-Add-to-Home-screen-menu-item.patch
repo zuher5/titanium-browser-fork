@@ -1,0 +1,33 @@
+From d55682ba505864113153c305f4c5049079c6ef43 Mon Sep 17 00:00:00 2001
+From: Zuher <zuher5@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 04:32:13 +0700
+Subject: [PATCH] Always offer the 'Add to Home screen' menu item
+
+isAddToHomeIntentSupported() relies on pin-shortcut/launcher detection
+that can report a false negative on some devices, which hides the
+'Add to Home screen' (install shortcut) menu item entirely. Force it
+to report support; the remaining gates (incognito, native page,
+file:// and content:// URLs) still apply.
+---
+ .../src/org/chromium/components/webapps/WebappsUtils.java    | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/components/webapps/browser/android/java/src/org/chromium/components/webapps/WebappsUtils.java b/components/webapps/browser/android/java/src/org/chromium/components/webapps/WebappsUtils.java
+index 3ea02fd..fd2082f 100644
+--- a/components/webapps/browser/android/java/src/org/chromium/components/webapps/WebappsUtils.java
++++ b/components/webapps/browser/android/java/src/org/chromium/components/webapps/WebappsUtils.java
+@@ -197,8 +197,9 @@ public class WebappsUtils {
+      * @return if a shortcut can be added to the home screen under the current profile.
+      */
+     public static boolean isAddToHomeIntentSupported() {
+-        if (isRequestPinShortcutSupported()) return true;
+-        return getShortcutReceiverPackageName() != null;
++        // Always offer the 'Add to Home screen' menu item: the launcher/shortcut-support
++        // detection below can return a false negative, hiding the item entirely.
++        return true;
+     }
+ 
+     private static @Nullable String getDefaultLauncherPackageName() {
+-- 
+2.54.0.windows.1
+
