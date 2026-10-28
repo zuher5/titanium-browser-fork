@@ -16,7 +16,9 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
-export CHROMIUM_SOURCE=https://chromium.googlesource.com/chromium/src.git
+# Use the GitHub mirror: googlesource throttles GitHub-hosted runners below
+# the point where a ~2.5 GB depth-1 pack fetch can complete.
+export CHROMIUM_SOURCE=https://github.com/chromium/chromium.git
 export DEBIAN_FRONTEND=noninteractive
 
 sudo apt-get update
@@ -46,10 +48,11 @@ else
   fi
 fi
 
-# Configure git for large fetch operations
+# Configure git for large fetch operations. Keep the low-speed abort generous
+# enough to not kill a slow-but-progressing transfer, only a truly stalled one.
 git config --global http.postBuffer 524288000
-git config --global http.lowSpeedLimit 1000
-git config --global http.lowSpeedTime 300
+git config --global http.lowSpeedLimit 50
+git config --global http.lowSpeedTime 600
 
 fetched=0
 for attempt in {1..5}; do
