@@ -1,54 +1,107 @@
 #!/bin/bash
+set -euo pipefail
+
+# Ensure key artifacts directory is always cleaned up on exit
+cleanup() {
+  rm -rf "${SCRIPT_DIR:-.}/keys"
+}
+trap cleanup EXIT
+
 source common.sh
 set_keys
-export VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
-export CHROMIUM_SOURCE=https://chromium.googlesource.com/chromium/src.git # https://github.com/chromium/chromium.git
+
+export VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' "$SCRIPT_DIR/vanadium/args.gn")
+if [[ -z "$VERSION" ]]; then
+  echo "Error: Failed to determine VERSION from vanadium/args.gn" >&2
+  exit 1
+fi
+
+export CHROMIUM_SOURCE=https://chromium.googlesource.com/chromium/src.git
 export DEBIAN_FRONTEND=noninteractive
+
 sudo apt-get update
 sudo apt-get install -y sudo lsb-release file nano git curl python3 python3-pillow imagemagick librsvg2-bin
-sudo dpkg --add-architecture i386; sudo apt-get update; sudo apt-get install -y libgcc-s1:i386
+sudo dpkg --add-architecture i386
+sudo apt-get update
+sudo apt-get install -y libgcc-s1:i386
 
-git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+# Setup depot_tools (reuse if already present)
+if [[ ! -d "depot_tools" ]]; then
+  git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+fi
 export PATH="$PWD/depot_tools:$PATH"
-mkdir -p chromium/src/out/Default; cd chromium/src
-git init
-git remote add origin $CHROMIUM_SOURCE
-git fetch --depth 1 $CHROMIUM_SOURCE +refs/tags/$VERSION:chromium_$VERSION
-git checkout $VERSION
-cp $SCRIPT_DIR/.gclient ../.gclient
+
+# Setup Chromium source directory (reuse checkout if compatible)
+mkdir -p chromium/src/out/Default
+cd chromium/src
+
+if [[ ! -d ".git" ]]; then
+  git init
+  git remote add origin "$CHROMIUM_SOURCE"
+else
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    git remote add origin "$CHROMIUM_SOURCE"
+  else
+    git remote set-url origin "$CHROMIUM_SOURCE"
+  fi
+fi
+
+git fetch --depth 1 origin "+refs/tags/$VERSION:chromium_$VERSION"
+git checkout -f "$VERSION"
+git clean -ffd
+cp "$SCRIPT_DIR/.gclient" ../.gclient
+
+# Reset and prepare Vanadium submodule patches cleanly
+if [[ -d "$SCRIPT_DIR/vanadium/.git" || -f "$SCRIPT_DIR/vanadium/.git" ]]; then
+  git -C "$SCRIPT_DIR/vanadium" checkout -f
+  git -C "$SCRIPT_DIR/vanadium" clean -fd
+fi
 
 # https://grapheneos.org/build#browser-and-webview
-rm -rf $SCRIPT_DIR/vanadium/patches/*trichrome-{apk-build-targets,browser-apk-targets}.patch
-rm -rf $SCRIPT_DIR/vanadium/patches/*{detailed,supported}-language*.patch
-rm -rf $SCRIPT_DIR/vanadium/patches/*javascript-optimizer-{site-setting,settings-UI}.patch
-rm -rf $SCRIPT_DIR/vanadium/patches/*component-updates.patch
-rm -rf $SCRIPT_DIR/vanadium/patches/*{pdf,PDF,for-content-public,toolbar-button,configs-from-config-app,config-app-parsing,new-tab-card,predictive-back}*.patch
-# rm -rf $SCRIPT_DIR/vanadium/patches/*crashpad*.patch
+rm -rf "$SCRIPT_DIR/vanadium/patches"/*trichrome-{apk-build-targets,browser-apk-targets}.patch
+rm -rf "$SCRIPT_DIR/vanadium/patches"/*{detailed,supported}-language*.patch
+rm -rf "$SCRIPT_DIR/vanadium/patches"/*javascript-optimizer-{site-setting,settings-UI}.patch
+rm -rf "$SCRIPT_DIR/vanadium/patches"/*component-updates.patch
+rm -rf "$SCRIPT_DIR/vanadium/patches"/*{pdf,PDF,for-content-public,toolbar-button,configs-from-config-app,config-app-parsing,new-tab-card,predictive-back}*.patch
+
 replace "$SCRIPT_DIR/vanadium/patches" "VANADIUM" "TITANIUM"
 replace "$SCRIPT_DIR/vanadium/patches" "Vanadium" "Titanium"
 replace "$SCRIPT_DIR/vanadium/patches" "vanadium" "titanium"
-git am --whitespace=nowarn --keep-non-patch $SCRIPT_DIR/vanadium/patches/*.patch
-git am --whitespace=nowarn --keep-non-patch $SCRIPT_DIR/patches/*.patch
+
+git am --whitespace=nowarn --keep-non-patch "$SCRIPT_DIR/vanadium/patches"/*.patch
+git am --whitespace=nowarn --keep-non-patch "$SCRIPT_DIR/patches"/*.patch
 
 gclient sync -D --no-history --nohooks
 gclient runhooks
 ./build/install-build-deps.sh --no-prompt
 
-source $SCRIPT_DIR/patch.sh
-cp $SCRIPT_DIR/args.gn out/Default/args.gn
-gn gen out/Default # gn args out/Default; echo 'treat_warnings_as_errors = false' >> out/Default/args.gn
-mkdir -p out/tmp out/release
+source "$SCRIPT_DIR/patch.sh"
+cp "$SCRIPT_DIR/args.gn" out/Default/args.gn
+gn gen out/Default
 
+# Build only the Android ARM64 APK. args.gn specifies target_cpu = "arm64".
 autoninja -C out/Default chrome_public_apk
-mv $(find out/Default/apks -name 'Chrome*.apk') out/tmp/$VERSION-armeabi-v7a.apk
-sed -i 's/target_cpu = "arm"/target_cpu = "arm64"/' out/Default/args.gn
-autoninja -C out/Default chrome_public_apk chrome_public_bundle
-mv $(find out/Default/apks -name 'Chrome*.apk') out/tmp/$VERSION-arm64-v8a.apk
-mv $(find out/Default/apks -name 'Chrome*.aab') out/tmp/$VERSION-arm64-v8a.aab
 
-export PATH=$PWD/third_party/jdk/current/bin/:$PATH
-export ANDROID_HOME=$PWD/third_party/android_sdk/public
-sign_apk out/tmp/$VERSION-armeabi-v7a.apk out/release/$VERSION-armeabi-v7a.apk
-sign_apk out/tmp/$VERSION-arm64-v8a.apk out/release/$VERSION-arm64-v8a.apk
-sign_aab out/tmp/$VERSION-arm64-v8a.aab out/release/$VERSION-arm64-v8a.aab
-rm -rf $SCRIPT_DIR/keys
+# Discover the built APK, ensuring exactly one non-empty APK is generated
+mapfile -t APK_FILES < <(find out/Default/apks -maxdepth 1 -type f -name '*.apk' -print)
+if [[ ${#APK_FILES[@]} -ne 1 || ! -s "${APK_FILES[0]}" ]]; then
+  echo "Expected exactly one non-empty APK in out/Default/apks; found ${#APK_FILES[@]}." >&2
+  printf '%s\n' "${APK_FILES[@]}" >&2
+  exit 1
+fi
+
+FINAL_APK_NAME="Titanium-$VERSION-arm64-v8a.apk"
+mkdir -p out/tmp out/release
+mv "${APK_FILES[0]}" "out/tmp/$FINAL_APK_NAME"
+
+export PATH="$PWD/third_party/jdk/current/bin/:$PATH"
+export ANDROID_HOME="$PWD/third_party/android_sdk/public"
+
+sign_apk "out/tmp/$FINAL_APK_NAME" "out/release/$FINAL_APK_NAME"
+
+if [[ ! -s "out/release/$FINAL_APK_NAME" ]]; then
+  echo "Error: Signed APK was not produced at out/release/$FINAL_APK_NAME" >&2
+  exit 1
+fi
+
+echo "Successfully built and signed $FINAL_APK_NAME"
