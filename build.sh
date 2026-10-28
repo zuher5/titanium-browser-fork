@@ -54,6 +54,11 @@ git config --global http.postBuffer 524288000
 git config --global http.lowSpeedLimit 50
 git config --global http.lowSpeedTime 600
 
+# git am below creates commits and needs a committer identity, which hosted
+# runners do not have.
+git config user.name "Titanium Build"
+git config user.email "build@titanium-browser.invalid"
+
 fetched=0
 for attempt in {1..5}; do
   if git fetch --depth 1 origin "+refs/tags/$VERSION:chromium_$VERSION"; then
