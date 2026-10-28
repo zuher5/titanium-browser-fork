@@ -55,9 +55,11 @@ git config --global http.lowSpeedLimit 50
 git config --global http.lowSpeedTime 600
 
 # git am below creates commits and needs a committer identity, which hosted
-# runners do not have.
-git config user.name "Titanium Build"
-git config user.email "build@titanium-browser.invalid"
+# runners do not have. Set it globally: gclient sync checks out nested
+# repositories (v8, third_party/...) where apply_subprojects_patches.py also
+# runs git am.
+git config --global user.name "Titanium Build"
+git config --global user.email "build@titanium-browser.invalid"
 
 fetched=0
 for attempt in {1..5}; do
