@@ -46,7 +46,25 @@ else
   fi
 fi
 
-git fetch --depth 1 origin "+refs/tags/$VERSION:chromium_$VERSION"
+# Configure git for large fetch operations
+git config --global http.postBuffer 524288000
+git config --global http.lowSpeedLimit 1000
+git config --global http.lowSpeedTime 300
+
+fetched=0
+for attempt in {1..5}; do
+  if git fetch --depth 1 origin "+refs/tags/$VERSION:chromium_$VERSION"; then
+    fetched=1
+    break
+  fi
+  echo "git fetch failed on attempt $attempt, retrying in 10s..." >&2
+  sleep 10
+done
+
+if [[ $fetched -ne 1 ]]; then
+  echo "Error: Failed to fetch Chromium source tag $VERSION after 5 attempts." >&2
+  exit 1
+fi
 git checkout -f "$VERSION"
 git clean -ffd
 cp "$SCRIPT_DIR/.gclient" ../.gclient
